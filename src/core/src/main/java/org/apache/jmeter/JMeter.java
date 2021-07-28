@@ -43,9 +43,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.StringTokenizer;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import javax.script.Bindings;
@@ -1254,6 +1257,12 @@ public class JMeter implements JMeterPlugin {
 
         private AtomicInteger startedRemoteEngines = new AtomicInteger(0);
 
+        private AtomicInteger remoteTimeoutThreshold = new AtomicInteger(0);
+
+        private final Timer remoteFinishTimer = new Timer(false);
+        private final int remoteFinishTimeoutSecs = JMeterUtils.getPropDefault("remote.timeout.secs", 60);
+        private AtomicReference<TimerTask> remoteFinishTimeout = new AtomicReference<>();
+
         private ConcurrentLinkedQueue<JMeterEngine> remoteEngines = new ConcurrentLinkedQueue<>();
 
         private final ReportGenerator reportGenerator;
@@ -1281,6 +1290,11 @@ public class JMeter implements JMeterPlugin {
             this.remoteEngines.clear();
             this.remoteEngines.addAll(engines);
             this.startedRemoteEngines = new AtomicInteger(remoteEngines.size());
+
+            float timeoutThreshold = JMeterUtils.getPropDefault("remote.timeout.threshold", 0F);
+            this.remoteTimeoutThreshold =new AtomicInteger( Math.round(remoteEngines.size() * timeoutThreshold));
+
+            log.info("Configured remote worker timeout threshold: {}", this.remoteTimeoutThreshold.get());
         }
 
         @Override
@@ -1288,13 +1302,36 @@ public class JMeter implements JMeterPlugin {
         public void testEnded(String host) {
             final long now=System.currentTimeMillis();
             log.info("Finished remote host: {} ({})", host, now);
-            if (startedRemoteEngines.decrementAndGet() <= 0) {
+
+            int remainingRemoteEngines = startedRemoteEngines.decrementAndGet();
+
+            if (remainingRemoteEngines <= 0) {
                 log.info("All remote engines have ended test, starting RemoteTestStopper thread");
                 Thread stopSoon = new Thread(() -> endTest(true), "RemoteTestStopper");
                 // the calling thread is a daemon; this thread must not be
                 // see Bug 59391
                 stopSoon.setDaemon(false);
                 stopSoon.start();
+            }
+
+            else if(remainingRemoteEngines < remoteTimeoutThreshold.get()) {
+                log.info("Reached minimum remote engine finishes, test will timeout after {} seconds.", remoteFinishTimeoutSecs);
+
+                TimerTask existingTimeout = remoteFinishTimeout.get();
+                if(existingTimeout != null ) {
+                    existingTimeout.cancel();
+                }
+
+                TimerTask newTimeout = new TimerTask() {
+                    @Override
+                    public void run() {
+                        log.info("Timed out awaiting remaining {} engines to finish.", startedRemoteEngines.get());
+                        endTest(true);
+                    }
+                };
+
+                remoteFinishTimer.schedule(newTimeout, TimeUnit.SECONDS.toMillis(remoteFinishTimeoutSecs));
+                remoteFinishTimeout.set(newTimeout);
             }
         }
 
@@ -1327,6 +1364,11 @@ public class JMeter implements JMeterPlugin {
             }
 
             if (isDistributed) {
+                TimerTask timeout = remoteFinishTimeout.get();
+                if(timeout != null) {
+                    timeout.cancel();
+                }
+
                 if (remoteStop) {
                     println("Exiting remote servers:"+remoteEngines);
                     for (JMeterEngine engine : remoteEngines){
