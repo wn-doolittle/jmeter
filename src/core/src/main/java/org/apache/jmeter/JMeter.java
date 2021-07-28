@@ -1259,7 +1259,7 @@ public class JMeter implements JMeterPlugin {
 
         private AtomicInteger remoteTimeoutThreshold = new AtomicInteger(0);
 
-        private final Timer remoteFinishTimer = new Timer(false);
+        private final Timer remoteFinishTimer = new Timer("RemoteFinishTimoutTimer", true);
         private final int remoteFinishTimeoutSecs = JMeterUtils.getPropDefault("remote.timeout.secs", 60);
         private AtomicReference<TimerTask> remoteFinishTimeout = new AtomicReference<>();
 
