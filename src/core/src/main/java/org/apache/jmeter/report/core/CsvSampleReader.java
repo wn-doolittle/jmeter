@@ -74,6 +74,10 @@ public class CsvSampleReader implements Closeable{
      * Number of sample_variables if csv file has no header
      */
     private int numberOfSampleVariablesInCsv;
+    /**
+     * Flag to ignore rows with incorrect col count, rather than throwing an error
+     */
+    private boolean ignoreInvalidRows;
 
     /**
      * Instantiates a new csv sample reader.
@@ -132,6 +136,7 @@ public class CsvSampleReader implements Closeable{
         } else {
             this.numberOfSampleVariablesInCsv = 0;
         }
+        this.ignoreInvalidRows = JMeterUtils.getPropDefault("ignore_invalid_samples", false);
         this.lastSampleRead = nextSample();
     }
 
@@ -181,15 +186,27 @@ public class CsvSampleReader implements Closeable{
     }
 
     private Sample nextSample() {
-        String[] data;
         try {
-            data = CSVSaveService.csvReadFile(reader, separator);
-            Sample sample = null;
-            if (data.length > 0) {
-                assertCorrectColumns(data);
-                sample = new Sample(row++, metadata, data);
+            while(true) {
+                String[] data = CSVSaveService.csvReadFile(reader, separator);
+
+                if(data.length == 0) {
+                    return null;
+                }
+
+                try {
+                    assertCorrectColumns(data);
+                    return new Sample(row++, metadata, data);
+                }catch(SampleException e) {
+                    if(ignoreInvalidRows) {
+                        log.warn("Ignoring invalid sample row: " + e.getMessage(), e);
+                        row++;
+                    }
+                    else {
+                        throw e;
+                    }
+                }
             }
-            return sample;
         } catch (IOException e) {
             throw new SampleException("Could not read sample <" + row + ">", e);
         }
