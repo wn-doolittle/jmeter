@@ -1366,6 +1366,9 @@ public class JMeter implements JMeterPlugin {
             final int pauseToCheckForRemainingThreads =
                     JMeterUtils.getPropDefault("jmeter.exit.check.pause", 2000); // $NON-NLS-1$
 
+            final boolean forceExit =
+                    JMeterUtils.getPropDefault("jmeter.exit.force", false); // $NON-NLS-1$
+
             if (pauseToCheckForRemainingThreads > 0) {
                 Thread daemon = new Thread(){
                     @Override
@@ -1380,6 +1383,11 @@ public class JMeter implements JMeterPlugin {
                         System.out.println("The JVM should have exited but did not.");//NOSONAR
                         System.out.println("The following non-daemon threads are still running (DestroyJavaVM is OK):");//NOSONAR
                         JOrphanUtils.displayThreads(false);
+
+                        if(forceExit) {
+                            println("Forcing JVM exit.");
+                            System.exit(0);
+                        }
                     }
 
                 };
